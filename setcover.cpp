@@ -1,100 +1,118 @@
 #include <iostream>
-#include <random>
-#include <ctime>
 #include <vector>
-#include <cmath>
-#include <cuda.h>
-#include "include/BasicCDS.h"
+#include <cstdlib>
+#include <cuda_runtime.h>
 
-using namespace std;
-using namespace cds;
+// Definición de las funciones para manipular los bits
+extern "C" {
+    void setBit64(unsigned long* array, int index);
+    void cleanBit64(unsigned long* array, int index);
+    int readBit64(const unsigned long array, int index);
+    void printBitsUlong(const unsigned long array);
+}
 
-// Función de kernel para calcular el Set Cover paralelizado
-__global__ void setCoverKernel(ulong *conjunto, const int* elementos, int* resultado, int numConjuntos, int numElementos) {
-    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+__global__ void setCoverProblemGPU(const unsigned long* sets, unsigned long* result,
+                                   int numSets, int numElements) {
+    int tid = threadIdx.x + blockIdx.x * blockDim.x;
 
-    if (idx < numElementos) {
-        for (int i = 0; i < numConjuntos; i++) {
-            if (getNum64(C, i * numElementos + idx, 1) == 1){
-                resultado[idx] = i;
-                break;
+    // Si el hilo está dentro de los límites del arreglo de conjuntos
+    if (tid < numSets) {
+        unsigned long coveredElements = 0;
+
+        // Comprobar si el conjunto actual cubre todos los elementos
+        for (int j = 0; j < numElements; ++j) {
+            if (readBit64(sets[tid], j)) {
+                coveredElements |= (1UL << j);
             }
         }
+
+        // Almacenar el resultado del conjunto en el arreglo de resultados
+        result[tid] = coveredElements;
     }
 }
 
-// Función principal
-int main(int argc, char** argv) {
-    if (argc < 3) {
-        cout << "Uso: programa <numero_de_conjuntos> <numero_de_elementos>" << endl;
+int main(int argc, char* argv[]) {
+    if (argc != 3) {
+        std::cout << "Uso: " << argv[0] << " n m" << std::endl;
         return 1;
     }
 
-    // Obtener el número de conjuntos y elementos de los argumentos de línea de comandos
-    int numConjuntos = stoi(argv[1]);
-    int numElementos = stoi(argv[2]);
+    int numSets = std::atoi(argv[1]);
+    int numElements = std::atoi(argv[2]);
 
-    // Generar la matriz de conjuntos aleatoriamente
-    //vector<int> conjuntos(numConjuntos * numElementos);
-    srand(time(nullptr));  // Inicializar la semilla del generador de números aleatorios
+    // Crear y asignar memoria en la GPU para los arreglos
+    unsigned long* sets = new unsigned long[numSets];
+    unsigned long* result = new unsigned long[numSets];
+    unsigned long* devSets, *devResult;
+    cudaMalloc((void**)&devSets, numSets * sizeof(unsigned long));
+    cudaMalloc((void**)&devResult, numSets * sizeof(unsigned long));
 
-    ulong *C = new ulong[numConjuntos * numElementos]:
-
-    for (int i = 0; i < numConjuntos; i++) {
-        for (int j = 0; j < numElementos; j++) {
-            if rand() % 2{
-                setBit64(&C, i * numElementos + j):
-            }else{
-                cleanBit64(&C, i * numElementos + j):
+    // Llenar los conjuntos con bits aleatorios (para ejemplo)
+    for (int i = 0; i < numSets; ++i) {
+        for (int j = 0; j < numElements; ++j) {
+            if (rand() % 2 == 1) {
+                setBit64(&sets[i], j);
             }
-            //conjuntos[i * numElementos + j] = rand() % 2;  // Generar 0 o 1 aleatoriamente
         }
     }
 
-    // Definir los elementos
-    vector<int> elementos(numElementos);
-    for (int i = 0; i < numElementos; i++) {
-        elementos[i] = i + 1;
+    // Copiar los arreglos desde la CPU a la GPU
+    cudaMemcpy(devSets, sets, numSets * sizeof(unsigned long), cudaMemcpyHostToDevice);
+
+    // Configurar el tamaño de la rejilla y los bloques de hilos
+    int blockSize = 256;
+    int gridSize = (numSets + blockSize - 1) / blockSize;
+
+    // Crear eventos para medir el tiempo
+    cudaEvent_t start, stop;
+    cudaEventCreate(&start);
+    cudaEventCreate(&stop);
+
+    // Registrar el inicio del tiempo
+    cudaEventRecord(start);
+
+    // Ejecutar el kernel en la GPU
+    setCoverProblemGPU<<<gridSize, blockSize>>>(devSets, devResult, numSets, numElements);
+
+    // Copiar el resultado desde la GPU a la CPU
+    cudaMemcpy(result, devResult, numSets * sizeof(unsigned long), cudaMemcpyDeviceToHost);
+
+    // Registrar el fin del tiempo
+    cudaEventRecord(stop);
+    cudaEventSynchronize(stop);
+
+    // Calcular el tiempo transcurrido en milisegundos
+    float milliseconds = 0;
+    cudaEventElapsedTime(&milliseconds, start, stop);
+
+    // Imprimir el tiempo transcurrido
+    std::cout << "Tiempo de ejecución: " << milliseconds << " ms" << std::endl;
+
+    // Imprimir los conjuntos que forman la cobertura completa
+    std::vector<int> selectedSets;
+    for (int i = 0; i < numSets; ++i) {
+        if (result[i] == ((1UL << numElements) - 1)) {
+            selectedSets.push_back(i);
+        }
+    }
+    std::cout << "Conjuntos que forman la cobertura completa:" << std::endl;
+    for (int i : selectedSets) {
+        std::cout << "Conjunto " << i << ": ";
+        printBitsUlong(sets[i]);
+        std::cout << std::endl;
     }
 
-    // Calcular el tamaño en bytes de los arreglos
-    size_t sizeConjuntos = numConjuntos * numElementos * sizeof(int);
-    size_t sizeElementos = numElementos * sizeof(int);
-    size_t sizeResultado = numElementos * sizeof(int);
+    // Liberar memoria
+    delete[] sets;
+    delete[] result;
+    cudaFree(devSets);
+    cudaFree(devResult);
 
-    // Reservar memoria en el dispositivo (GPU)
-    int* d_conjuntos;
-    int* d_elementos;
-    int* d_resultado;
-    cudaMalloc((void**)&d_conjuntos, sizeConjuntos);
-    cudaMalloc((void**)&d_elementos, sizeElementos);
-    cudaMalloc((void**)&d_resultado, sizeResultado);
-
-    // Copiar los datos desde la CPU al dispositivo
-    cudaMemcpy(d_conjuntos, conjuntos.data(), sizeConjuntos, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_elementos, elementos.data(), sizeElementos, cudaMemcpyHostToDevice);
-
-    // Definir la configuración de ejecución del kernel
-    int threadsPerBlock = 256;
-    int numBlocks = ceil((float)numElementos / threadsPerBlock);
-
-    // Lanzar el kernel en la GPU
-    setCoverKernel<<<numBlocks, threadsPerBlock>>>(d_conjuntos, d_elementos, d_resultado, numConjuntos, numElementos);
-
-    // Copiar el resultado desde el dispositivo a la CPU
-    vector<int> resultado(numElementos);
-    cudaMemcpy(resultado.data(), d_resultado, sizeResultado, cudaMemcpyDeviceToHost);
-
-    // Imprimir el resultado
-    cout << "Resultado del Set Cover:" << endl;
-    for (int i = 0; i < numElementos; i++) {
-        cout << "Elemento " << elementos[i] << " está en el conjunto " << resultado[i] << endl;
-    }
-
-    // Liberar memoria en el dispositivo
-    cudaFree(d_conjuntos);
-    cudaFree(d_elementos);
-    cudaFree(d_resultado);
+    // Destruir los eventos
+    cudaEventDestroy(start);
+    cudaEventDestroy(stop);
 
     return 0;
 }
+
+// g++ -std=c++14 -O3 -Wall -DVERBOSE -I./include/ ./include/BasicCDS.cpp setcover.cpp -o setcover -lcudart
