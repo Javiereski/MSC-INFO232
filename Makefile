@@ -5,4 +5,4 @@ SOURCES=./include/BasicCDS.cpp setcover.cpp
 
 unary:
 	@echo " [BLD] Building binary unary"
-	@$(CPP) $(CPPFLAGS) $(INCLUDES) $(SOURCES) -o setcover
+	@$(CPP) $(CPPFLAGS) $(INCLUDES) $(SOURCES) -o setcover -fopenmp
