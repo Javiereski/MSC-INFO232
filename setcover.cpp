@@ -6,7 +6,7 @@
 using namespace std;
 using namespace cds;
 
-#define PRINT 1
+#define PRINT 0
 #define TEST 1
 
 // Función para calcular el "set cover problem" de manera paralela
@@ -87,13 +87,18 @@ vector<int> calculateSetCoverProblemSerial(unsigned long* sets, int numSets, int
 }
 
 int main(int argc, char* argv[]) {
-    if (argc != 3) {
-        cout << "Uso: " << argv[0] << " n m" << endl;
+    if (argc != 4) {
+        cout << "Uso: " << argv[0] << " n m threads" << endl;
         return 1;
     }
 
     int numSets = atoi(argv[1]);
     int numElements = atoi(argv[2]);
+    int numThreads = std::atoi(argv[3]);
+
+    // Establecer el número de threads para la región paralela
+    omp_set_num_threads(numThreads);
+    cout << "Numero de threads: " << numThreads << endl;
 
     if (PRINT) cout << "Matriz de conjuntos/elementos: " << endl;
 
@@ -101,9 +106,8 @@ int main(int argc, char* argv[]) {
     ulong* sets = new ulong[numSets*sizeof(ulong)];
     for (int i = 0; i < numSets; ++i) {
         for (int j = 0; j < numElements; ++j) {
-            if (rand() % 2 == 1) {
+            if (rand() % 2) {
                 setBit64(&sets[i], j);
-                //setBit64(sets, i * numElements + j);
             }
         }
         if (PRINT){
@@ -111,7 +115,6 @@ int main(int argc, char* argv[]) {
             cout << endl;
         }
     }
-
 
     // Medir el tiempo de ejecución
     double startTime = omp_get_wtime();
@@ -140,10 +143,14 @@ int main(int argc, char* argv[]) {
             cout << endl;
         }
     }
-    
 
+    // Imprimir el tiempo de ejecución
+    cout << "Tiempo de ejecución paralela: " << executionTime << " segundos" << endl;
+    
     if (TEST){
         cout << "Verificando..." << endl;
+
+        startTime = omp_get_wtime();
         // Calcular el "set cover problem" de manera serial
         vector<int> selectedSetsSerial = calculateSetCoverProblemSerial(sets, numSets, numElements);
 
@@ -151,15 +158,16 @@ int main(int argc, char* argv[]) {
         bool resultsMatch = equal(selectedSetsParallel.begin(), selectedSetsParallel.end(),
                                   selectedSetsSerial.begin(), selectedSetsSerial.end());
 
+        endTime = omp_get_wtime();
+        executionTime = endTime - startTime;
+
         if (resultsMatch) {
             cout << "Test Aprobado" << endl;
         }else{
             cout << "Error" << endl;
         }
+        cout << "Tiempo de ejecución secuencial: " << executionTime << " segundos" << endl;
     }
-
-    // Imprimir el tiempo de ejecución
-    cout << "Tiempo de ejecución paralela: " << executionTime << " segundos" << endl;
 
     // Liberar memoria
     delete[] sets;
